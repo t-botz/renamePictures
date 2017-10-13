@@ -1,0 +1,13 @@
+apply plugin: 'java'
+apply plugin: 'application'
+
+
+mainClassName = "com.tibodelor.tools.renamePictures.Main"
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    compile 'com.drewnoakes:metadata-extractor:2.10.1'
+}
