@@ -11,9 +11,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.Date;
+import java.util.Optional;
 import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -27,21 +29,27 @@ public class RenamePicture implements Runnable {
     private static final Set<String> allowedExtensions = Set.of("jpg", "jpeg");
 
     private static final Pattern FILE_EXTENSION_PATTERN = Pattern.compile("^.+\\.(\\w{1,4})$");
+    private static final DateTimeFormatter DIRECTORY_FORMAT = DateTimeFormatter.ISO_LOCAL_DATE;
+    private static final DateTimeFormatter FILE_NAME_FORMAT = DateTimeFormatter.ofPattern("YYYYMMdd-HHmmss");
 
     private final Path inputDir;
     private final Path outputDir;
+    private final Path duplicateDir;
 
     public RenamePicture(Path inputDir, Path outputDir) {
         if (!Files.isDirectory(inputDir))
             throw new RuntimeException("Can't Find " + inputDir);
         this.inputDir = inputDir;
         this.outputDir = outputDir;
+        this.duplicateDir = outputDir.resolve("_DUP");
+
     }
 
     @Override
     public void run() {
         try {
             Files.createDirectories(outputDir);
+            Files.createDirectory(duplicateDir);
         } catch (IOException e) {
             LOG.log(Level.SEVERE, "Fail to create outdir", e);
             return;
@@ -50,25 +58,41 @@ public class RenamePicture implements Runnable {
         try {
             Files.walkFileTree(inputDir, new SimpleFileVisitor<>() {
                 @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                    if (matchAllowedExtension(allowedExtensions, file)) {
-                        LOG.log(Level.FINER, "Inspecting {0}", file);
-                        try {
-                            Metadata metadata = ImageMetadataReader.readMetadata(file.toFile());
-                            ExifSubIFDDirectory directory = metadata.getFirstDirectoryOfType(ExifSubIFDDirectory.class);
-                            if (directory == null) {
-                                LOG.log(Level.WARNING, "No exif directory for file {0}", file.toString());
-                                return FileVisitResult.CONTINUE;
-                            }
-                            Date date = directory.getDate(ExifSubIFDDirectory.TAG_DATETIME_ORIGINAL);
-                            if (date == null) {
-                                LOG.log(Level.WARNING, "No exif directory for file {0}", file.toString());
-                                return FileVisitResult.CONTINUE;
-                            }
-                            LOG.log(Level.FINER, "Got date {0} for file {1} ", new Object[]{DateTimeFormatter.ISO_DATE_TIME.format(date.toInstant().atOffset(ZoneOffset.UTC)), file});
+                public FileVisitResult visitFile(Path inputFile, BasicFileAttributes attrs) throws IOException {
+                    Optional<String> fileExtension = getFileExtension(inputFile);
+                    if (fileExtension.isPresent()) {
+                        String extension = fileExtension.get();
+                        if (matchAllowedExtension(allowedExtensions, extension)) {
+                            LOG.log(Level.FINER, "Inspecting {0}", inputFile);
+                            try {
+                                Metadata metadata = ImageMetadataReader.readMetadata(inputFile.toFile());
+                                ExifSubIFDDirectory exifDirectory = metadata.getFirstDirectoryOfType(ExifSubIFDDirectory.class);
+                                if (exifDirectory == null) {
+                                    LOG.log(Level.WARNING, "No exif directory for inputFile {0}", inputFile.toString());
+                                    return FileVisitResult.CONTINUE;
+                                }
+                                Date date = exifDirectory.getDate(ExifSubIFDDirectory.TAG_DATETIME_ORIGINAL);
+                                if (date == null) {
+                                    LOG.log(Level.WARNING, "No exif directory for inputFile {0}", inputFile.toString());
+                                    return FileVisitResult.CONTINUE;
+                                }
 
-                        } catch (ImageProcessingException e) {
-                            LOG.log(Level.WARNING, e, () -> "Couldn't process " + file.toString());
+                                OffsetDateTime dateUtc = date.toInstant().atOffset(ZoneOffset.UTC);
+                                String dirName = DIRECTORY_FORMAT.format(dateUtc);
+                                String fileName = FILE_NAME_FORMAT.format(dateUtc);
+                                Path destinationDir = Files.createDirectory(outputDir.resolve(dirName));
+                                Path destinationFile = destinationDir.resolve(fileName  + "." + extension);
+                                for (int i = 1; destinationFile.toFile().exists(); i++) {
+                                    LOG.log(Level.INFO, "File already exists!", destinationFile.toString());
+                                    destinationFile = duplicateDir.resolve(fileName+ "_" + i + "." + extension);
+                                }
+
+                                LOG.log(Level.FINE, "Renaming {0} to {1}", new Object[]{inputFile, destinationFile});
+                                Files.move(inputFile, destinationFile);
+
+                            } catch (ImageProcessingException e) {
+                                LOG.log(Level.WARNING, e, () -> "Couldn't process " + inputFile.toString());
+                            }
                         }
                     }
 
@@ -81,18 +105,22 @@ public class RenamePicture implements Runnable {
 
     }
 
-    private static boolean matchAllowedExtension(Set<String> allowedExtensions, Path pathToMatch) {
-        String pathString = pathToMatch.toString();
+    private static boolean matchAllowedExtension(Set<String> allowedExtensions, String extensionToMatch) {
+        boolean isMatching = allowedExtensions.contains(extensionToMatch);
+        LOG.log(Level.FINER, "Is extension {0} matching allowed extensions? {1}", new Object[]{extensionToMatch, isMatching});
+        return isMatching;
+    }
+
+    private static Optional<String> getFileExtension(Path path) {
+        String pathString = path.toString();
         Matcher matcher = FILE_EXTENSION_PATTERN.matcher(pathString);
         if (matcher.matches()) {
             String extension = matcher.group(1).toLowerCase();
-            boolean isMatching = allowedExtensions.contains(extension);
-            LOG.log(Level.FINER, "Is extension {0} matching allowed extensions? {1} , fileName: {2}", new Object[]{extension, isMatching, pathString});
-            return isMatching;
+            LOG.log(Level.FINER, "Extension {0} found in path {1}", new Object[]{extension, pathString});
+            return Optional.of(extension);
         } else {
             LOG.log(Level.FINER, "Couldn't match for an extension, fileName: {0}", pathString);
-            return false;
+            return Optional.empty();
         }
-
     }
 }

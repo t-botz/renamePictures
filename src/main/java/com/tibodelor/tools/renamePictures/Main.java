@@ -19,6 +19,6 @@ public class Main {
     }
 
     public static void main(String[] args) {
-        new RenamePicture(Paths.get("i:/phototagged/photos"), Paths.get("i:/destination")).run();
+        new RenamePicture(Paths.get("i:/phototagged_copy/photos"), Paths.get("i:/destination")).run();
     }
 }
