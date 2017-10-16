@@ -62,7 +62,11 @@ public class RenamePicture implements Runnable {
                     Optional<String> fileExtension = getFileExtension(inputFile);
                     if (fileExtension.isPresent()) {
                         String extension = fileExtension.get();
-                        if (matchAllowedExtension(allowedExtensions, extension)) {
+                        if("db".equals(extension)){
+                            LOG.log(Level.FINE, "Removing {0}", inputFile);
+                            Files.delete(inputFile);
+                        }
+                        else if (matchAllowedExtension(allowedExtensions, extension)) {
                             LOG.log(Level.FINER, "Inspecting {0}", inputFile);
                             try {
                                 Metadata metadata = ImageMetadataReader.readMetadata(inputFile.toFile());
@@ -98,9 +102,19 @@ public class RenamePicture implements Runnable {
 
                     return FileVisitResult.CONTINUE;
                 }
+
+
+                @Override
+                public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
+                    super.postVisitDirectory(dir, exc);
+                    if (Files.list(dir).count() == 0){
+                        Files.delete(dir);
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
             });
         } catch (IOException e) {
-            e.printStackTrace();
+            LOG.log(Level.SEVERE, "failed to visit files", e);
         }
 
     }
