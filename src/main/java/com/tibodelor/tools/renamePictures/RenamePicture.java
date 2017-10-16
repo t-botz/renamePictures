@@ -29,7 +29,7 @@ public class RenamePicture implements Runnable {
     private static final Set<String> allowedExtensions = Set.of("jpg", "jpeg");
 
     private static final Pattern FILE_EXTENSION_PATTERN = Pattern.compile("^.+\\.(\\w{1,4})$");
-    private static final DateTimeFormatter DIRECTORY_FORMAT = DateTimeFormatter.ISO_LOCAL_DATE;
+    private static final DateTimeFormatter DIRECTORY_FORMAT = DateTimeFormatter.ofPattern("YYYY");
     private static final DateTimeFormatter FILE_NAME_FORMAT = DateTimeFormatter.ofPattern("YYYYMMdd-HHmmss");
 
     private final Path inputDir;
@@ -49,7 +49,7 @@ public class RenamePicture implements Runnable {
     public void run() {
         try {
             Files.createDirectories(outputDir);
-            Files.createDirectory(duplicateDir);
+            Files.createDirectories(duplicateDir);
         } catch (IOException e) {
             LOG.log(Level.SEVERE, "Fail to create outdir", e);
             return;
@@ -80,7 +80,7 @@ public class RenamePicture implements Runnable {
                                 OffsetDateTime dateUtc = date.toInstant().atOffset(ZoneOffset.UTC);
                                 String dirName = DIRECTORY_FORMAT.format(dateUtc);
                                 String fileName = FILE_NAME_FORMAT.format(dateUtc);
-                                Path destinationDir = Files.createDirectory(outputDir.resolve(dirName));
+                                Path destinationDir = Files.createDirectories(outputDir.resolve(dirName));
                                 Path destinationFile = destinationDir.resolve(fileName  + "." + extension);
                                 for (int i = 1; destinationFile.toFile().exists(); i++) {
                                     LOG.log(Level.INFO, "File already exists!", destinationFile.toString());
