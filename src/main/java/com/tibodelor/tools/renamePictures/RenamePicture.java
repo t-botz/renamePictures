@@ -1,5 +1,8 @@
 package com.tibodelor.tools.renamePictures;
 
+import com.coremedia.iso.IsoFile;
+import com.coremedia.iso.boxes.MovieBox;
+import com.coremedia.iso.boxes.MovieHeaderBox;
 import com.drew.imaging.ImageMetadataReader;
 import com.drew.imaging.ImageProcessingException;
 import com.drew.metadata.Metadata;
@@ -26,7 +29,8 @@ public class RenamePicture implements Runnable {
 
     private static final Logger LOG = Logger.getLogger(RenamePicture.class.getName());
 
-    private static final Set<String> allowedExtensions = Set.of("jpg", "jpeg");
+    private static final Set<String> SUPPORTED_IMAGE_EXT = Set.of("jpg", "jpeg");
+    private static final Set<String> SUPPORTED_VIDEO_EXT = Set.of("mp4");
 
     private static final Pattern FILE_EXTENSION_PATTERN = Pattern.compile("^.+\\.(\\w{1,4})$");
     private static final DateTimeFormatter DIRECTORY_FORMAT = DateTimeFormatter.ofPattern("YYYY");
@@ -66,7 +70,7 @@ public class RenamePicture implements Runnable {
                             LOG.log(Level.FINE, "Removing {0}", inputFile);
                             Files.delete(inputFile);
                         }
-                        else if (matchAllowedExtension(allowedExtensions, extension)) {
+                        else if (matchAllowedExtension(SUPPORTED_IMAGE_EXT, extension)) {
                             LOG.log(Level.FINER, "Inspecting {0}", inputFile);
                             try {
                                 Metadata metadata = ImageMetadataReader.readMetadata(inputFile.toFile());
@@ -81,21 +85,40 @@ public class RenamePicture implements Runnable {
                                     return FileVisitResult.CONTINUE;
                                 }
 
-                                OffsetDateTime dateUtc = date.toInstant().atOffset(ZoneOffset.UTC);
-                                String dirName = DIRECTORY_FORMAT.format(dateUtc);
-                                String fileName = FILE_NAME_FORMAT.format(dateUtc);
-                                Path destinationDir = Files.createDirectories(outputDir.resolve(dirName));
-                                Path destinationFile = destinationDir.resolve(fileName  + "." + extension);
-                                for (int i = 1; destinationFile.toFile().exists(); i++) {
-                                    LOG.log(Level.INFO, "File already exists!", destinationFile.toString());
-                                    destinationFile = duplicateDir.resolve(fileName+ "_" + i + "." + extension);
-                                }
-
-                                LOG.log(Level.FINE, "Renaming {0} to {1}", new Object[]{inputFile, destinationFile});
-                                Files.move(inputFile, destinationFile);
+                                moveFile(inputFile, extension, date);
 
                             } catch (ImageProcessingException e) {
                                 LOG.log(Level.WARNING, e, () -> "Couldn't process " + inputFile.toString());
+                            }
+                        }
+                        else if (matchAllowedExtension(SUPPORTED_VIDEO_EXT, extension)) {
+                            LOG.log(Level.FINER, "Inspecting {0}", inputFile);
+                            IsoFile isoFile = null;
+                            try{
+                                isoFile = new IsoFile(inputFile.toString());
+                                MovieBox movieBox = isoFile.getMovieBox();
+                                if(movieBox == null){
+                                    LOG.log(Level.FINE, "No movieBox for inputFile {0}", inputFile.toString());
+                                    return FileVisitResult.CONTINUE;
+                                }
+                                MovieHeaderBox movieHeaderBox = movieBox.getMovieHeaderBox();
+                                if(movieHeaderBox == null){
+                                    LOG.log(Level.FINE, "No movieHeaderBox for inputFile {0}", inputFile.toString());
+                                    return FileVisitResult.CONTINUE;
+                                }
+                                Date creationTime = movieHeaderBox.getCreationTime();
+
+                                if(creationTime == null){
+                                    LOG.log(Level.FINE, "No creationTime for inputFile {0}", inputFile.toString());
+                                    return FileVisitResult.CONTINUE;
+                                }
+                                isoFile.close();
+                                moveFile(inputFile, extension, creationTime);
+                            }
+                            finally {
+                                if (isoFile != null) {
+                                    isoFile.close();
+                                }
                             }
                         }
                     }
@@ -117,6 +140,21 @@ public class RenamePicture implements Runnable {
             LOG.log(Level.SEVERE, "failed to visit files", e);
         }
 
+    }
+
+    private void moveFile(Path inputFile, String extension, Date date) throws IOException {
+        OffsetDateTime dateUtc = date.toInstant().atOffset(ZoneOffset.UTC);
+        String dirName = DIRECTORY_FORMAT.format(dateUtc);
+        String fileName = FILE_NAME_FORMAT.format(dateUtc);
+        Path destinationDir = Files.createDirectories(outputDir.resolve(dirName));
+        Path destinationFile = destinationDir.resolve(fileName  + "." + extension);
+        for (int i = 1; destinationFile.toFile().exists(); i++) {
+            LOG.log(Level.INFO, "File already exists!", destinationFile.toString());
+            destinationFile = duplicateDir.resolve(fileName+ "_" + i + "." + extension);
+        }
+
+        LOG.log(Level.FINE, "Renaming {0} to {1}", new Object[]{inputFile, destinationFile});
+        Files.move(inputFile, destinationFile);
     }
 
     private static boolean matchAllowedExtension(Set<String> allowedExtensions, String extensionToMatch) {
