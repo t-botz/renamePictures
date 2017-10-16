@@ -10,4 +10,7 @@ repositories {
 
 dependencies {
     compile 'com.drewnoakes:metadata-extractor:2.10.1'
+
+    testCompile("org.junit.jupiter:junit-jupiter-api:5.0.0")
+    testRuntime("org.junit.jupiter:junit-jupiter-engine:5.0.0")
 }
