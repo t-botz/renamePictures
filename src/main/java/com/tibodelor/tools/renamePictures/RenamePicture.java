@@ -29,8 +29,8 @@ public class RenamePicture implements Runnable {
 
     private static final Logger LOG = Logger.getLogger(RenamePicture.class.getName());
 
-    private static final Set<String> SUPPORTED_IMAGE_EXT = Set.of("jpg", "jpeg");
-    private static final Set<String> SUPPORTED_VIDEO_EXT = Set.of("mp4");
+    private static final Set<String> SUPPORTED_IMAGE_EXT = Set.of("jpg", "jpeg", "tif", "cdr");
+    private static final Set<String> SUPPORTED_VIDEO_EXT = Set.of("mp4", "3gp", "mov");
 
     private static final Pattern FILE_EXTENSION_PATTERN = Pattern.compile("^.+\\.(\\w{1,4})$");
     private static final DateTimeFormatter DIRECTORY_FORMAT = DateTimeFormatter.ofPattern("YYYY");
@@ -66,11 +66,10 @@ public class RenamePicture implements Runnable {
                     Optional<String> fileExtension = getFileExtension(inputFile);
                     if (fileExtension.isPresent()) {
                         String extension = fileExtension.get();
-                        if("db".equals(extension)){
+                        if ("db".equals(extension)) {
                             LOG.log(Level.FINE, "Removing {0}", inputFile);
                             Files.delete(inputFile);
-                        }
-                        else if (matchAllowedExtension(SUPPORTED_IMAGE_EXT, extension)) {
+                        } else if (matchAllowedExtension(SUPPORTED_IMAGE_EXT, extension)) {
                             LOG.log(Level.FINER, "Inspecting {0}", inputFile);
                             try {
                                 Metadata metadata = ImageMetadataReader.readMetadata(inputFile.toFile());
@@ -90,32 +89,30 @@ public class RenamePicture implements Runnable {
                             } catch (ImageProcessingException e) {
                                 LOG.log(Level.WARNING, e, () -> "Couldn't process " + inputFile.toString());
                             }
-                        }
-                        else if (matchAllowedExtension(SUPPORTED_VIDEO_EXT, extension)) {
+                        } else if (matchAllowedExtension(SUPPORTED_VIDEO_EXT, extension)) {
                             LOG.log(Level.FINER, "Inspecting {0}", inputFile);
                             IsoFile isoFile = null;
-                            try{
+                            try {
                                 isoFile = new IsoFile(inputFile.toString());
                                 MovieBox movieBox = isoFile.getMovieBox();
-                                if(movieBox == null){
+                                if (movieBox == null) {
                                     LOG.log(Level.FINE, "No movieBox for inputFile {0}", inputFile.toString());
                                     return FileVisitResult.CONTINUE;
                                 }
                                 MovieHeaderBox movieHeaderBox = movieBox.getMovieHeaderBox();
-                                if(movieHeaderBox == null){
+                                if (movieHeaderBox == null) {
                                     LOG.log(Level.FINE, "No movieHeaderBox for inputFile {0}", inputFile.toString());
                                     return FileVisitResult.CONTINUE;
                                 }
                                 Date creationTime = movieHeaderBox.getCreationTime();
 
-                                if(creationTime == null){
+                                if (creationTime == null) {
                                     LOG.log(Level.FINE, "No creationTime for inputFile {0}", inputFile.toString());
                                     return FileVisitResult.CONTINUE;
                                 }
                                 isoFile.close();
                                 moveFile(inputFile, extension, creationTime);
-                            }
-                            finally {
+                            } finally {
                                 if (isoFile != null) {
                                     isoFile.close();
                                 }
@@ -130,7 +127,7 @@ public class RenamePicture implements Runnable {
                 @Override
                 public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
                     super.postVisitDirectory(dir, exc);
-                    if (Files.list(dir).count() == 0){
+                    if (Files.list(dir).count() == 0) {
                         Files.delete(dir);
                     }
                     return FileVisitResult.CONTINUE;
@@ -147,10 +144,10 @@ public class RenamePicture implements Runnable {
         String dirName = DIRECTORY_FORMAT.format(dateUtc);
         String fileName = FILE_NAME_FORMAT.format(dateUtc);
         Path destinationDir = Files.createDirectories(outputDir.resolve(dirName));
-        Path destinationFile = destinationDir.resolve(fileName  + "." + extension);
+        Path destinationFile = destinationDir.resolve(fileName + "." + extension);
         for (int i = 1; destinationFile.toFile().exists(); i++) {
             LOG.log(Level.INFO, "File already exists!", destinationFile.toString());
-            destinationFile = duplicateDir.resolve(fileName+ "_" + i + "." + extension);
+            destinationFile = duplicateDir.resolve(fileName + "_" + i + "." + extension);
         }
 
         LOG.log(Level.FINE, "Renaming {0} to {1}", new Object[]{inputFile, destinationFile});
