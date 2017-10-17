@@ -4,16 +4,18 @@ import com.coremedia.iso.IsoFile;
 import com.coremedia.iso.boxes.MovieBox;
 import com.coremedia.iso.boxes.MovieHeaderBox;
 import com.drew.imaging.ImageMetadataReader;
-import com.drew.imaging.ImageProcessingException;
 import com.drew.metadata.Metadata;
 import com.drew.metadata.exif.ExifSubIFDDirectory;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -149,27 +151,78 @@ public class RenamePicture implements Runnable {
     }
 
     private void moveFile(Path inputFile, String extension, Optional<Date> date) throws IOException {
-        Path destinationFile;
         if (date.isPresent()) {
             OffsetDateTime dateUtc = date.get().toInstant().atOffset(ZoneOffset.UTC);
             String dirName = DIRECTORY_FORMAT.format(dateUtc);
             String fileName = FILE_NAME_FORMAT.format(dateUtc);
             Path destinationDir = Files.createDirectories(outputDir.resolve(dirName));
-            destinationFile = destinationDir.resolve(fileName + "." + extension);
-            for (int i = 1; destinationFile.toFile().exists(); i++) {
-                LOG.log(Level.INFO, "File already exists! {0}", destinationFile.toString());
-                destinationDir = Files.createDirectories(duplicateDir.resolve(dirName));
-                destinationFile = destinationDir.resolve(fileName + "_" + i + "." + extension);
-            }
+            tryMoveFile(inputFile, conflictNumber -> {
+                Path actualDestinationDir = destinationDir;
+                String conflictString = "";
+                if (conflictNumber > 0) {
+                    actualDestinationDir = Files.createDirectories(duplicateDir.resolve(dirName));
+                    conflictString = "_" + conflictNumber;
+                }
+                return actualDestinationDir.resolve(fileName + conflictString + "." + extension);
+            });
         } else {
-            destinationFile = noDateDir.resolve(inputFile.getFileName());
-            for (int i = 1; destinationFile.toFile().exists(); i++) {
-                LOG.log(Level.INFO, "File already exists! {0}", destinationFile.toString());
-                destinationFile = noDateDir.resolve(i + "_" + inputFile.getFileName() );
+            tryMoveFile(inputFile, conflictNumber -> {
+                String conflictString = "";
+                if (conflictNumber > 0) {
+                    conflictString = conflictNumber + "_";
+                }
+                return noDateDir.resolve(conflictString + inputFile.getFileName());
+            });
+        }
+    }
+
+    private static void tryMoveFile(Path inputFile, FileRenamer fileRenamer) throws IOException {
+        String hashOriginal = null;
+        for (int i = 0; ; i++) {
+            Path pathTry = fileRenamer.getPath(i);
+            if (Files.exists(pathTry)) {
+                try {
+                    if (hashOriginal == null)
+                        hashOriginal = getFileChecksum(inputFile);
+                    String hashOtherFile = getFileChecksum(pathTry);
+                    if (hashOriginal.equals(hashOtherFile)) {
+                        Files.delete(inputFile);
+                        LOG.log(Level.INFO, "Files are identical, removing first one [{0}]==[{1}]", new Object[]{inputFile, pathTry});
+                        return;
+                    }
+
+                } catch (IOException | NoSuchAlgorithmException e) {
+                    LOG.log(Level.WARNING, "Can't get file hash!! " + pathTry.toString(), e);
+                }
+                LOG.log(Level.FINE, "File already exists! {0}", pathTry.toString());
+            } else {
+                LOG.log(Level.FINE, "Renaming {0} to {1}", new Object[]{inputFile, pathTry});
+                Files.move(inputFile, pathTry);
+                return;
             }
         }
-        LOG.log(Level.FINE, "Renaming {0} to {1}", new Object[]{inputFile, destinationFile});
-        Files.move(inputFile, destinationFile);
+    }
+
+
+    private static String getFileChecksum(Path p) throws IOException, NoSuchAlgorithmException {
+        MessageDigest digest = MessageDigest.getInstance("SHA-1");
+        try (InputStream fis = Files.newInputStream(p)) {
+            byte[] byteArray = new byte[1024];
+            int bytesCount = 0;
+
+            //Read file data and update in message digest
+            while ((bytesCount = fis.read(byteArray)) != -1) {
+                digest.update(byteArray, 0, bytesCount);
+            }
+        }
+
+        byte[] bytes = digest.digest();
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < bytes.length; i++) {
+            sb.append(Integer.toString((bytes[i] & 0xff) + 0x100, 16).substring(1));
+        }
+        return sb.toString();
+
     }
 
     private static boolean matchAllowedExtension(Set<String> allowedExtensions, String extensionToMatch) {
