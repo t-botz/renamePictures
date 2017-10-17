@@ -38,6 +38,7 @@ public class RenamePicture implements Runnable {
 
     private final Path inputDir;
     private final Path outputDir;
+    private final Path noDateDir;
     private final Path duplicateDir;
 
     public RenamePicture(Path inputDir, Path outputDir) {
@@ -46,6 +47,7 @@ public class RenamePicture implements Runnable {
         this.inputDir = inputDir;
         this.outputDir = outputDir;
         this.duplicateDir = outputDir.resolve("_DUP");
+        this.noDateDir = outputDir.resolve("Unknown");
 
     }
 
@@ -54,6 +56,7 @@ public class RenamePicture implements Runnable {
         try {
             Files.createDirectories(outputDir);
             Files.createDirectories(duplicateDir);
+            Files.createDirectories(noDateDir);
         } catch (IOException e) {
             LOG.log(Level.SEVERE, "Fail to create outdir", e);
             return;
@@ -66,58 +69,8 @@ public class RenamePicture implements Runnable {
                     Optional<String> fileExtension = getFileExtension(inputFile);
                     if (fileExtension.isPresent()) {
                         String extension = fileExtension.get();
-                        if ("db".equals(extension)) {
-                            LOG.log(Level.FINE, "Removing {0}", inputFile);
-                            Files.delete(inputFile);
-                        } else if (matchAllowedExtension(SUPPORTED_IMAGE_EXT, extension)) {
-                            LOG.log(Level.FINER, "Inspecting {0}", inputFile);
-                            try {
-                                Metadata metadata = ImageMetadataReader.readMetadata(inputFile.toFile());
-                                ExifSubIFDDirectory exifDirectory = metadata.getFirstDirectoryOfType(ExifSubIFDDirectory.class);
-                                if (exifDirectory == null) {
-                                    LOG.log(Level.WARNING, "No exif directory for inputFile {0}", inputFile.toString());
-                                    return FileVisitResult.CONTINUE;
-                                }
-                                Date date = exifDirectory.getDate(ExifSubIFDDirectory.TAG_DATETIME_ORIGINAL);
-                                if (date == null) {
-                                    LOG.log(Level.WARNING, "No exif directory for inputFile {0}", inputFile.toString());
-                                    return FileVisitResult.CONTINUE;
-                                }
-
-                                moveFile(inputFile, extension, date);
-
-                            } catch (ImageProcessingException e) {
-                                LOG.log(Level.WARNING, e, () -> "Couldn't process " + inputFile.toString());
-                            }
-                        } else if (matchAllowedExtension(SUPPORTED_VIDEO_EXT, extension)) {
-                            LOG.log(Level.FINER, "Inspecting {0}", inputFile);
-                            IsoFile isoFile = null;
-                            try {
-                                isoFile = new IsoFile(inputFile.toString());
-                                MovieBox movieBox = isoFile.getMovieBox();
-                                if (movieBox == null) {
-                                    LOG.log(Level.FINE, "No movieBox for inputFile {0}", inputFile.toString());
-                                    return FileVisitResult.CONTINUE;
-                                }
-                                MovieHeaderBox movieHeaderBox = movieBox.getMovieHeaderBox();
-                                if (movieHeaderBox == null) {
-                                    LOG.log(Level.FINE, "No movieHeaderBox for inputFile {0}", inputFile.toString());
-                                    return FileVisitResult.CONTINUE;
-                                }
-                                Date creationTime = movieHeaderBox.getCreationTime();
-
-                                if (creationTime == null) {
-                                    LOG.log(Level.FINE, "No creationTime for inputFile {0}", inputFile.toString());
-                                    return FileVisitResult.CONTINUE;
-                                }
-                                isoFile.close();
-                                moveFile(inputFile, extension, creationTime);
-                            } finally {
-                                if (isoFile != null) {
-                                    isoFile.close();
-                                }
-                            }
-                        }
+                        Optional<Date> mediaDate = getMediaDate(inputFile, extension);
+                        moveFile(inputFile, extension, mediaDate);
                     }
 
                     return FileVisitResult.CONTINUE;
@@ -139,17 +92,82 @@ public class RenamePicture implements Runnable {
 
     }
 
-    private void moveFile(Path inputFile, String extension, Date date) throws IOException {
-        OffsetDateTime dateUtc = date.toInstant().atOffset(ZoneOffset.UTC);
-        String dirName = DIRECTORY_FORMAT.format(dateUtc);
-        String fileName = FILE_NAME_FORMAT.format(dateUtc);
-        Path destinationDir = Files.createDirectories(outputDir.resolve(dirName));
-        Path destinationFile = destinationDir.resolve(fileName + "." + extension);
-        for (int i = 1; destinationFile.toFile().exists(); i++) {
-            LOG.log(Level.INFO, "File already exists!", destinationFile.toString());
-            destinationFile = duplicateDir.resolve(fileName + "_" + i + "." + extension);
-        }
+    private Optional<Date> getMediaDate(Path inputFile, String extension) {
+        if (matchAllowedExtension(SUPPORTED_IMAGE_EXT, extension)) {
+            return getImageDate(inputFile);
+        } else if (matchAllowedExtension(SUPPORTED_VIDEO_EXT, extension)) {
+            return getVideoDate(inputFile);
+        } else
+            return Optional.empty();
+    }
 
+    private Optional<Date> getImageDate(Path inputFile) {
+        Metadata metadata;
+        try {
+            metadata = ImageMetadataReader.readMetadata(inputFile.toFile());
+        } catch (Exception e) {
+            LOG.log(Level.WARNING, "Couldn't read file " + inputFile.toString(), e);
+            return Optional.empty();
+        }
+        ExifSubIFDDirectory exifDirectory = metadata.getFirstDirectoryOfType(ExifSubIFDDirectory.class);
+        if (exifDirectory == null) {
+            LOG.log(Level.WARNING, "No exif directory for inputFile {0}", inputFile.toString());
+            return Optional.empty();
+        }
+        Date date = exifDirectory.getDate(ExifSubIFDDirectory.TAG_DATETIME_ORIGINAL);
+        if (date == null) {
+            LOG.log(Level.WARNING, "No date tag for inputFile {0}", inputFile.toString());
+            return Optional.empty();
+        }
+        return Optional.of(date);
+    }
+
+    private Optional<Date> getVideoDate(Path inputFile) {
+        LOG.log(Level.FINER, "Inspecting {0}", inputFile);
+        try (IsoFile isoFile = new IsoFile(inputFile.toString())) {
+            MovieBox movieBox = isoFile.getMovieBox();
+            if (movieBox == null) {
+                LOG.log(Level.FINE, "No movieBox for inputFile {0}", inputFile.toString());
+                return Optional.empty();
+            }
+            MovieHeaderBox movieHeaderBox = movieBox.getMovieHeaderBox();
+            if (movieHeaderBox == null) {
+                LOG.log(Level.FINE, "No movieHeaderBox for inputFile {0}", inputFile.toString());
+                return Optional.empty();
+            }
+            Date creationTime = movieHeaderBox.getCreationTime();
+
+            if (creationTime == null) {
+                LOG.log(Level.FINE, "No creationTime for inputFile {0}", inputFile.toString());
+                return Optional.empty();
+            }
+            return Optional.of(creationTime);
+        } catch (IOException e) {
+            LOG.log(Level.WARNING, "Couldn't read file " + inputFile.toString(), e);
+            return Optional.empty();
+        }
+    }
+
+    private void moveFile(Path inputFile, String extension, Optional<Date> date) throws IOException {
+        Path destinationFile;
+        if (date.isPresent()) {
+            OffsetDateTime dateUtc = date.get().toInstant().atOffset(ZoneOffset.UTC);
+            String dirName = DIRECTORY_FORMAT.format(dateUtc);
+            String fileName = FILE_NAME_FORMAT.format(dateUtc);
+            Path destinationDir = Files.createDirectories(outputDir.resolve(dirName));
+            destinationFile = destinationDir.resolve(fileName + "." + extension);
+            for (int i = 1; destinationFile.toFile().exists(); i++) {
+                LOG.log(Level.INFO, "File already exists! {0}", destinationFile.toString());
+                destinationDir = Files.createDirectories(duplicateDir.resolve(dirName));
+                destinationFile = destinationDir.resolve(fileName + "_" + i + "." + extension);
+            }
+        } else {
+            destinationFile = noDateDir.resolve(inputFile.getFileName());
+            for (int i = 1; destinationFile.toFile().exists(); i++) {
+                LOG.log(Level.INFO, "File already exists! {0}", destinationFile.toString());
+                destinationFile = noDateDir.resolve(i + "_" + inputFile.getFileName() );
+            }
+        }
         LOG.log(Level.FINE, "Renaming {0} to {1}", new Object[]{inputFile, destinationFile});
         Files.move(inputFile, destinationFile);
     }
