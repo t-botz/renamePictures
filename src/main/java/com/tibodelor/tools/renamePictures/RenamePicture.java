@@ -1,25 +1,19 @@
 package com.tibodelor.tools.renamePictures;
 
-import com.coremedia.iso.IsoFile;
-import com.coremedia.iso.boxes.MovieBox;
-import com.coremedia.iso.boxes.MovieHeaderBox;
-import com.drew.imaging.ImageMetadataReader;
-import com.drew.metadata.Metadata;
-import com.drew.metadata.exif.ExifSubIFDDirectory;
+import com.tibodelor.tools.renamePictures.mediaHandler.ImageFileDecorator;
+import com.tibodelor.tools.renamePictures.mediaHandler.MediaFileDecorator;
+import com.tibodelor.tools.renamePictures.mediaHandler.UnkownMediaFileDecorator;
+import com.tibodelor.tools.renamePictures.mediaHandler.VideoFileDecorator;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
-import java.util.Date;
 import java.util.Optional;
 import java.util.Set;
 import java.util.logging.Level;
@@ -71,8 +65,8 @@ public class RenamePicture implements Runnable {
                     Optional<String> fileExtension = getFileExtension(inputFile);
                     if (fileExtension.isPresent()) {
                         String extension = fileExtension.get();
-                        Optional<Date> mediaDate = getMediaDate(inputFile, extension);
-                        moveFile(inputFile, extension, mediaDate);
+                        MediaFileDecorator mediaFile = getMediaDecorator(inputFile, extension);
+                        moveFile(mediaFile, extension);
                     }
 
                     return FileVisitResult.CONTINUE;
@@ -94,69 +88,23 @@ public class RenamePicture implements Runnable {
 
     }
 
-    private Optional<Date> getMediaDate(Path inputFile, String extension) {
+    private MediaFileDecorator getMediaDecorator(Path inputFile, String extension) {
         if (matchAllowedExtension(SUPPORTED_IMAGE_EXT, extension)) {
-            return getImageDate(inputFile);
+            return new ImageFileDecorator(inputFile);
         } else if (matchAllowedExtension(SUPPORTED_VIDEO_EXT, extension)) {
-            return getVideoDate(inputFile);
+            return new VideoFileDecorator(inputFile);
         } else
-            return Optional.empty();
+            return new UnkownMediaFileDecorator(inputFile);
     }
 
-    private Optional<Date> getImageDate(Path inputFile) {
-        Metadata metadata;
-        try {
-            metadata = ImageMetadataReader.readMetadata(inputFile.toFile());
-        } catch (Exception e) {
-            LOG.log(Level.WARNING, "Couldn't read file " + inputFile.toString(), e);
-            return Optional.empty();
-        }
-        ExifSubIFDDirectory exifDirectory = metadata.getFirstDirectoryOfType(ExifSubIFDDirectory.class);
-        if (exifDirectory == null) {
-            LOG.log(Level.WARNING, "No exif directory for inputFile {0}", inputFile.toString());
-            return Optional.empty();
-        }
-        Date date = exifDirectory.getDate(ExifSubIFDDirectory.TAG_DATETIME_ORIGINAL);
-        if (date == null) {
-            LOG.log(Level.WARNING, "No date tag for inputFile {0}", inputFile.toString());
-            return Optional.empty();
-        }
-        return Optional.of(date);
-    }
-
-    private Optional<Date> getVideoDate(Path inputFile) {
-        LOG.log(Level.FINER, "Inspecting {0}", inputFile);
-        try (IsoFile isoFile = new IsoFile(inputFile.toString())) {
-            MovieBox movieBox = isoFile.getMovieBox();
-            if (movieBox == null) {
-                LOG.log(Level.FINE, "No movieBox for inputFile {0}", inputFile.toString());
-                return Optional.empty();
-            }
-            MovieHeaderBox movieHeaderBox = movieBox.getMovieHeaderBox();
-            if (movieHeaderBox == null) {
-                LOG.log(Level.FINE, "No movieHeaderBox for inputFile {0}", inputFile.toString());
-                return Optional.empty();
-            }
-            Date creationTime = movieHeaderBox.getCreationTime();
-
-            if (creationTime == null) {
-                LOG.log(Level.FINE, "No creationTime for inputFile {0}", inputFile.toString());
-                return Optional.empty();
-            }
-            return Optional.of(creationTime);
-        } catch (IOException e) {
-            LOG.log(Level.WARNING, "Couldn't read file " + inputFile.toString(), e);
-            return Optional.empty();
-        }
-    }
-
-    private void moveFile(Path inputFile, String extension, Optional<Date> date) throws IOException {
-        if (date.isPresent()) {
-            OffsetDateTime dateUtc = date.get().toInstant().atOffset(ZoneOffset.UTC);
+    private void moveFile(MediaFileDecorator mediaFile, String extension) throws IOException {
+        Optional<OffsetDateTime> mediaDate = mediaFile.getMediaDate();
+        if (mediaDate.isPresent()) {
+            OffsetDateTime dateUtc = mediaDate.get().toInstant().atOffset(ZoneOffset.UTC);
             String dirName = DIRECTORY_FORMAT.format(dateUtc);
             String fileName = FILE_NAME_FORMAT.format(dateUtc);
             Path destinationDir = Files.createDirectories(outputDir.resolve(dirName));
-            tryMoveFile(inputFile, conflictNumber -> {
+            tryMoveFile(mediaFile, conflictNumber -> {
                 Path actualDestinationDir = destinationDir;
                 String conflictString = "";
                 if (conflictNumber > 0) {
@@ -166,64 +114,34 @@ public class RenamePicture implements Runnable {
                 return actualDestinationDir.resolve(fileName + conflictString + "." + extension);
             });
         } else {
-            tryMoveFile(inputFile, conflictNumber -> {
+            tryMoveFile(mediaFile, conflictNumber -> {
                 String conflictString = "";
                 if (conflictNumber > 0) {
                     conflictString = conflictNumber + "_";
                 }
-                return noDateDir.resolve(conflictString + inputFile.getFileName());
+                return noDateDir.resolve(conflictString + mediaFile.getPath().getFileName());
             });
         }
     }
 
-    private static void tryMoveFile(Path inputFile, FileRenamer fileRenamer) throws IOException {
-        String hashOriginal = null;
+    private static void tryMoveFile(MediaFileDecorator mediaFile, FileRenamer fileRenamer) throws IOException {
         for (int i = 0; ; i++) {
             Path pathTry = fileRenamer.getPath(i);
             if (Files.exists(pathTry)) {
-                try {
-                    if (hashOriginal == null)
-                        hashOriginal = getFileChecksum(inputFile);
-                    String hashOtherFile = getFileChecksum(pathTry);
-                    if (hashOriginal.equals(hashOtherFile)) {
-                        Files.delete(inputFile);
-                        LOG.log(Level.INFO, "Files are identical, removing first one [{0}]==[{1}]", new Object[]{inputFile, pathTry});
-                        return;
-                    }
-
-                } catch (IOException | NoSuchAlgorithmException e) {
-                    LOG.log(Level.WARNING, "Can't get file hash!! " + pathTry.toString(), e);
+                if (mediaFile.isMediaContentIdenticalTo(pathTry).orElse(false)) {
+                    Files.delete(mediaFile.getPath());
+                    LOG.log(Level.INFO, "Files are identical, removing first one [{0}]==[{1}]", new Object[]{mediaFile.getPath(), pathTry});
+                    return;
                 }
-                LOG.log(Level.FINE, "File already exists! {0}", pathTry.toString());
+                LOG.log(Level.FINE, "File name already taken! {0}", pathTry.toString());
             } else {
-                LOG.log(Level.FINE, "Renaming {0} to {1}", new Object[]{inputFile, pathTry});
-                Files.move(inputFile, pathTry);
+                LOG.log(Level.FINE, "Renaming {0} to {1}", new Object[]{mediaFile.getPath(), pathTry});
+                Files.move(mediaFile.getPath(), pathTry);
                 return;
             }
         }
     }
 
-
-    private static String getFileChecksum(Path p) throws IOException, NoSuchAlgorithmException {
-        MessageDigest digest = MessageDigest.getInstance("SHA-1");
-        try (InputStream fis = Files.newInputStream(p)) {
-            byte[] byteArray = new byte[1024];
-            int bytesCount = 0;
-
-            //Read file data and update in message digest
-            while ((bytesCount = fis.read(byteArray)) != -1) {
-                digest.update(byteArray, 0, bytesCount);
-            }
-        }
-
-        byte[] bytes = digest.digest();
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < bytes.length; i++) {
-            sb.append(Integer.toString((bytes[i] & 0xff) + 0x100, 16).substring(1));
-        }
-        return sb.toString();
-
-    }
 
     private static boolean matchAllowedExtension(Set<String> allowedExtensions, String extensionToMatch) {
         boolean isMatching = allowedExtensions.contains(extensionToMatch);

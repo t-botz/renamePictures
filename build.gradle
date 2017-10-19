@@ -1,12 +1,23 @@
 apply plugin: 'java'
 apply plugin: 'application'
+apply plugin: 'org.junit.platform.gradle.plugin'
 
+buildscript {
+    repositories {
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'org.junit.platform:junit-platform-gradle-plugin:1.0.1'
+    }
+}
 
 mainClassName = "com.tibodelor.tools.renamePictures.Main"
 
 repositories {
     mavenCentral()
 }
+
+
 
 dependencies {
     compile 'com.drewnoakes:metadata-extractor:2.10.1'
