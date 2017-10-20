@@ -58,7 +58,7 @@ public class VideoFileDecorator implements MediaFileDecorator {
 
     @Override
     public Path getPath() {
-        return null;
+        return inputFile;
     }
 
     @Override
