@@ -63,6 +63,7 @@ public class VideoFileDecorator implements MediaFileDecorator {
 
     @Override
     public Optional<Boolean> isMediaContentIdenticalTo(Path otherFile) {
-        return null;
+        //TODO: Smarter implemtation for videos
+        return new UnkownMediaFileDecorator(inputFile).isMediaContentIdenticalTo(otherFile);
     }
 }

@@ -9,7 +9,7 @@ import java.nio.file.Paths;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 
-import static com.tibodelor.tools.renamePictures.mediaHandler.PathUtils.getPath;
+import static com.tibodelor.tools.renamePictures.PathUtils.getPath;
 import static org.junit.jupiter.api.Assertions.*;
 
 

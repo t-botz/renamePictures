@@ -5,7 +5,7 @@ import org.junit.jupiter.api.Test;
 import java.net.URISyntaxException;
 import java.nio.file.Path;
 
-import static com.tibodelor.tools.renamePictures.mediaHandler.PathUtils.getPath;
+import static com.tibodelor.tools.renamePictures.PathUtils.getPath;
 import static org.junit.jupiter.api.Assertions.*;
 
 class UnkownMediaFileDecoratorTest {

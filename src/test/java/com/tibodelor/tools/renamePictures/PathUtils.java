@@ -1,4 +1,4 @@
-package com.tibodelor.tools.renamePictures.mediaHandler;
+package com.tibodelor.tools.renamePictures;
 
 import java.net.URISyntaxException;
 import java.nio.file.Path;
