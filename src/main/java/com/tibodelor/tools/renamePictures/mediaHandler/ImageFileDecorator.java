@@ -4,6 +4,9 @@ import com.drew.imaging.ImageMetadataReader;
 import com.drew.metadata.Metadata;
 import com.drew.metadata.exif.ExifSubIFDDirectory;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.awt.image.DataBuffer;
 import java.nio.file.Path;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -62,7 +65,29 @@ public class ImageFileDecorator implements MediaFileDecorator {
 
     @Override
     public Optional<Boolean> isMediaContentIdenticalTo(Path otherFile) {
-        loadMetadata();
-        return Optional.of(false);
+        try {
+            // take buffer data from botm image files //
+            BufferedImage biA = ImageIO.read(inputFile.toFile());
+            DataBuffer dbA = biA.getData().getDataBuffer();
+            int sizeA = dbA.getSize();
+            BufferedImage biB = ImageIO.read(otherFile.toFile());
+            DataBuffer dbB = biB.getData().getDataBuffer();
+            int sizeB = dbB.getSize();
+            // compare data-buffer objects //
+            if (sizeA == sizeB) {
+                for (int i = 0; i < sizeA; i++) {
+                    if (dbA.getElem(i) != dbB.getElem(i)) {
+                        return Optional.of(false);
+                    }
+                }
+            } else {
+                return Optional.of(false);
+            }
+        } catch (Exception e) {
+            LOG.log(Level.WARNING, String.format("Could not compare image files [{0}] and [{1}]", inputFile, otherFile), e);
+            return Optional.empty();
+        }
+        return Optional.of(true);
     }
+
 }
